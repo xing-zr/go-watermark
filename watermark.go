@@ -3,8 +3,10 @@ package go_watermark
 import (
 	"errors"
 	"github.com/disintegration/imaging"
+	"github.com/golang/freetype"
 	"image"
 	"image/draw"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 )
@@ -113,6 +115,79 @@ func CreateImageWatermark(config ImageWatermarkConfig) error {
 		return errors.New("watermark position error")
 	}
 	if err = imaging.Save(destImg, config.CompositeImagePath); err != nil {
+		return errors.New("create composite image error:" + err.Error())
+	}
+	return nil
+}
+
+type TextWatermarkConfig struct {
+	OriginImagePath    string // 原图地址
+	CompositeImagePath string // 合成图地址
+	FontPath           string // 字体文件地址
+	TextInfos          []TextInfo
+}
+
+type TextInfo struct {
+	Text string  // 文字内容
+	Size float64 // 文字大小
+	X    int     // 位置信息
+	Y    int     // 位置信息
+}
+
+func CreateTextWatermark(config TextWatermarkConfig) error {
+	originFile, err := os.Open(config.OriginImagePath)
+	if err != nil {
+		return errors.New("open origin image file error:" + err.Error())
+	}
+	defer originFile.Close()
+	// 如果合成图片存在则删除重新生成
+	isExists, _ := pathExists(config.CompositeImagePath)
+	if isExists {
+		err = os.Remove(config.CompositeImagePath)
+		if err != nil {
+			return errors.New("old composite image remove error:" + err.Error())
+		}
+	}
+	// 判断文件夹是否存在，不存在创建
+	dirPath := filepath.Dir(config.CompositeImagePath)
+	isExist, _ := pathExists(dirPath)
+	if !isExist {
+		err = os.MkdirAll(dirPath, 0755)
+		if err != nil {
+			return err
+		}
+	}
+	img, err := imaging.Decode(originFile)
+	if err != nil {
+		return err
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, img.Bounds().Dx(), img.Bounds().Dy()))
+	draw.Draw(dst, dst.Bounds(), img, img.Bounds().Min, draw.Over)
+	// load font file
+	fontBytes, err := ioutil.ReadFile(config.FontPath)
+	if err != nil {
+		return err
+	}
+	font, err := freetype.ParseFont(fontBytes)
+	if err != nil {
+		return err
+	}
+	for _, v := range config.TextInfos {
+		f := freetype.NewContext()
+		f.SetDPI(72)
+		f.SetFont(font)       // 加载字体
+		f.SetFontSize(v.Size) // 设置字体尺寸
+		f.SetClip(dst.Bounds())
+		f.SetDst(dst)
+		f.SetSrc(image.Black) // 设置字体颜色
+		// 位置信息
+		pt := freetype.Pt(v.X, v.Y)
+		_, err = f.DrawString(v.Text, pt)
+		if err != nil {
+			return err
+		}
+	}
+	if err = imaging.Save(dst, config.CompositeImagePath); err != nil {
 		return errors.New("create composite image error:" + err.Error())
 	}
 	return nil
